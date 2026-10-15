@@ -88,14 +88,63 @@ class BinanceMarketClient:
         symbol: str,
         order_id: int,
     ) -> list[dict]:
-        return self._signed_get(
+        trades = self._signed_get(
             "/api/v3/myTrades",
             {
                 "symbol": symbol.upper(),
                 "orderId": order_id,
             },
         )
+        return trades
 
+    def _signed_post(
+        self,
+        path: str,
+        params: dict | None = None,
+    ) -> dict:
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError(
+                "Faltan las credenciales de Binance Testnet"
+            )
+
+        payload = dict(params or {})
+        payload["timestamp"] = int(time.time() * 1000)
+        payload["recvWindow"] = 5000
+
+        query = urlencode(payload)
+        signature = hmac.new(
+            self.api_secret.encode(),
+            query.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
+        response = self.client.post(
+            path,
+            params={**payload, "signature": signature},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def place_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        order_type: str,
+        quantity: str,
+        client_order_id: str | None = None,
+    ) -> dict:
+        params: dict = {
+            "symbol": symbol.upper(),
+            "side": side.upper(),
+            "type": order_type.upper(),
+            "quantity": quantity,
+        }
+
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
+
+        return self._signed_post("/api/v3/order", params)
 
     def get_klines(
         self,
@@ -116,7 +165,6 @@ class BinanceMarketClient:
         )
         response.raise_for_status()
         return response.json()
-
 
     def close(self):
         self.client.close()
