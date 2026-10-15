@@ -74,6 +74,50 @@ class BinanceMarketClient:
             or float(balance["locked"]) > 0
         ]
 
+    def get_order(self, symbol: str, order_id: int | str) -> dict:
+        return self._signed_get(
+            "/api/v3/order",
+            {
+                "symbol": symbol.upper(),
+                "orderId": order_id,
+            },
+        )
+
+    def get_my_trades(
+        self,
+        symbol: str,
+        order_id: int,
+    ) -> list[dict]:
+        return self._signed_get(
+            "/api/v3/myTrades",
+            {
+                "symbol": symbol.upper(),
+                "orderId": order_id,
+            },
+        )
+
+
+    def get_klines(
+        self,
+        symbol: str = "BTCUSDT",
+        interval: str = "1m",
+        limit: int = 100,
+    ) -> list[list]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit debe estar entre 1 y 1000.")
+
+        response = self.client.get(
+            "/api/v3/klines",
+            params={
+                "symbol": symbol.upper(),
+                "interval": interval,
+                "limit": limit,
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+
     def close(self):
         self.client.close()
 

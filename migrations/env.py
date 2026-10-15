@@ -9,6 +9,9 @@ from app.storage.database import Base
 
 import app.storage.models  # noqa: F401
 
+import app.storage.risk_models  # noqa: F401
+
+
 load_dotenv()
 
 config = context.config
