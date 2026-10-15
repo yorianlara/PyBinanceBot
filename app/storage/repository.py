@@ -206,6 +206,15 @@ def open_position(
         return position.id
 
 
+def get_open_positions(symbol: str | None = None) -> list[TradePosition]:
+    with SessionLocal() as session:
+        statement = select(TradePosition).where(TradePosition.status == "open")
+        if symbol is not None:
+            statement = statement.where(TradePosition.symbol == symbol.upper())
+        statement = statement.order_by(TradePosition.opened_at.asc())
+        return list(session.scalars(statement).all())
+
+
 def close_position(
     position_id: int,
     *,

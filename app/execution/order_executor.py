@@ -113,3 +113,68 @@ class OrderExecutor:
             f"Estado Binance: {exchange_order['status']}"
         )
 
+    def execute_market_sell(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        client_order_id: str | None = None,
+    ) -> Decimal:
+        """Ejecuta una venta MARKET en Binance para cerrar posición.
+        Devuelve el precio medio de salida obtenido.
+        """
+        try:
+            response = self.client.place_order(
+                symbol=symbol,
+                side="SELL",
+                order_type="MARKET",
+                quantity=str(quantity),
+                client_order_id=client_order_id,
+            )
+        except Exception as exc:
+            logger.error("Error al enviar orden SELL a Binance: %s", exc)
+            raise OrderExecutionError(
+                f"Binance rechazó la orden de venta: {exc}"
+            ) from exc
+
+        exchange_order_id = str(response["orderId"])
+
+        # Consultar trades para obtener precio real de ejecución
+        trades = self.client.get_my_trades(symbol, int(exchange_order_id))
+        if trades:
+            total_qty = sum(Decimal(str(t["qty"])) for t in trades)
+            total_quote = sum(
+                Decimal(str(t["qty"])) * Decimal(str(t["price"]))
+                for t in trades
+            )
+            if total_qty > 0:
+                avg_price = total_quote / total_qty
+                logger.info(
+                    "Venta completada para %s %s: precio medio=%s",
+                    quantity,
+                    symbol,
+                    avg_price,
+                )
+                return avg_price
+
+        # Fallback a detalles de orden
+        order_info = self.client.get_order(symbol, exchange_order_id)
+        executed_qty = Decimal(str(order_info.get("executedQty", "0")))
+        cummulative_quote = Decimal(str(order_info.get("cummulativeQuoteQty", "0")))
+        if executed_qty > 0 and cummulative_quote > 0:
+            avg_price = cummulative_quote / executed_qty
+            logger.info(
+                "Venta completada para %s %s: precio medio=%s (desde order)",
+                quantity,
+                symbol,
+                avg_price,
+            )
+            return avg_price
+
+        fallback_price = self.get_current_price(symbol)
+        logger.warning(
+            "No se pudieron calcular fills para orden %s; usando precio actual: %s",
+            exchange_order_id,
+            fallback_price,
+        )
+        return fallback_price
+

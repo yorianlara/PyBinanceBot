@@ -245,3 +245,56 @@ class TestExecuteMarketBuyErrors:
 
         risk.convert_to_position.assert_not_called()
 
+
+# ---------------------------------------------------------------------------
+# Tests: execute_market_sell
+# ---------------------------------------------------------------------------
+
+class TestExecuteMarketSell:
+    def test_sell_success_with_trades(self):
+        executor, client, _ = _make_executor(
+            place_order_response={"orderId": "67890"},
+            trades_response=[
+                _binance_trade(
+                    order_id="67890",
+                    trade_id="111",
+                    quantity="0.00036",
+                    price="63000.00",
+                )
+            ],
+        )
+
+        exit_price = executor.execute_market_sell("BTCUSDT", Decimal("0.00036"))
+
+        assert exit_price == Decimal("63000.00")
+        client.place_order.assert_called_once_with(
+            symbol="BTCUSDT",
+            side="SELL",
+            order_type="MARKET",
+            quantity="0.00036",
+            client_order_id=None,
+        )
+
+    def test_sell_success_with_order_fallback(self):
+        executor, _, _ = _make_executor(
+            place_order_response={"orderId": "67890"},
+            trades_response=[],
+            order_status_response={
+                "orderId": "67890",
+                "executedQty": "0.00036",
+                "cummulativeQuoteQty": "22.68",
+            },
+        )
+
+        exit_price = executor.execute_market_sell("BTCUSDT", Decimal("0.00036"))
+
+        assert exit_price == Decimal("22.68") / Decimal("0.00036")
+
+    def test_sell_binance_rejection_raises(self):
+        executor, _, _ = _make_executor(
+            place_order_error=RuntimeError("Market lot size error"),
+        )
+
+        with pytest.raises(OrderExecutionError, match="rechazó la orden de venta"):
+            executor.execute_market_sell("BTCUSDT", Decimal("0.00036"))
+
