@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Platform — Multi-Bot Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Barra Superior -->
+        <header class="top-nav">
+            <div class="brand">
+                <span class="brand-icon">⚡</span>
+                <h1>Multi-Bot Trading Dashboard</h1>
+                <span class="badge badge-subtle">Portfolio (100 €)</span>
+            </div>
+            <div class="header-actions">
+                <div class="system-status">
+                    <span id="binance-badge" class="status-pill {% if data.binance_connected %}status-online{% else %}status-offline{% endif %}">
+                        Binance: {% if data.binance_connected %}ONLINE{% else %}OFFLINE{% endif %}
+                    </span>
+                    <span id="db-badge" class="status-pill {% if data.db_connected %}status-online{% else %}status-offline{% endif %}">
+                        DB: {% if data.db_connected %}CONECTADA{% else %}DESCONECTADA{% endif %}
+                    </span>
+                </div>
+                <button id="btn-run-cycle" class="btn btn-secondary">
+                    <span>🔄</span> Ejecutar Ciclo Manual
+                </button>
+                <button id="btn-open-modal" class="btn btn-primary">
+                    <span>➕</span> Nuevo Bot
+                </button>
+            </div>
+        </header>
+
+        <!-- Mensajes de Alerta / Notificación -->
+        <div id="notification-bar" class="notification-bar hidden"></div>
+
+        <!-- Fila de Tarjetas de Riesgo y Capital -->
+        <section class="metrics-grid">
+            <div class="card metric-card">
+                <div class="metric-label">Capital Total</div>
+                <div class="metric-value">{{ "%.2f"|format(data.risk_summary.get('max_capital_eur', 100)) }} €</div>
+                <div class="metric-sub">Asignación máx: {{ "%.2f"|format(data.risk_summary.get('max_allocation_per_strategy_eur', 20)) }} € / bot</div>
+            </div>
+
+            <div class="card metric-card">
+                <div class="metric-label">PnL Hoy</div>
+                <div id="daily-pnl" class="metric-value {% if data.risk_summary.get('daily_pnl_eur', 0) >= 0 %}text-success{% else %}text-danger{% endif %}">
+                    {{ "%+.2f"|format(data.risk_summary.get('daily_pnl_eur', 0)) }} €
+                </div>
+                <div class="metric-sub">Freno diario: -{{ "%.2f"|format(data.risk_summary.get('max_daily_loss_eur', 2)) }} €</div>
+            </div>
+
+            <div class="card metric-card">
+                <div class="metric-label">PnL Acumulado</div>
+                <div id="total-pnl" class="metric-value {% if data.risk_summary.get('total_pnl_eur', 0) >= 0 %}text-success{% else %}text-danger{% endif %}">
+                    {{ "%+.2f"|format(data.risk_summary.get('total_pnl_eur', 0)) }} €
+                </div>
+                <div class="metric-sub">Freno total: -{{ "%.2f"|format(data.risk_summary.get('max_total_loss_eur', 5)) }} €</div>
+            </div>
+
+            <div class="card metric-card">
+                <div class="metric-label">Estado de Riesgo</div>
+                <div id="risk-status" class="metric-value {% if data.risk_summary.get('trading_allowed', true) %}text-success{% else %}text-danger{% endif %}">
+                    {% if data.risk_summary.get('trading_allowed', true) %}OPERATIVO{% else %}BLOQUEADO{% endif %}
+                </div>
+                <div class="metric-sub">Posiciones: <span id="pos-count">{{ data.open_positions|length }}</span> / 1 máx</div>
+            </div>
+        </section>
+
+        <!-- Sección de Gestión de Bots -->
+        <section class="card section-card">
+            <div class="section-header">
+                <div>
+                    <h2>🤖 Ecosistema de Bots</h2>
+                    <p class="section-desc">Activa, desactiva o crea estrategias dinámicamente. El motor solo ejecutará los bots marcados como activos.</p>
+                </div>
+                <div class="bot-counter">
+                    <span id="active-bots-badge" class="badge badge-accent">{{ bots|selectattr('is_active')|list|length }} activos</span>
+                    <span class="badge badge-subtle">{{ bots|length }} configurados</span>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Estado</th>
+                            <th>Nombre del Bot</th>
+                            <th>Tipo</th>
+                            <th>Par</th>
+                            <th>Parámetros Clave</th>
+                            <th>Asignación</th>
+                            <th class="text-right">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bots-table-body">
+                        {% for bot in bots %}
+                        <tr id="bot-row-{{ bot.key }}">
+                            <td>
+                                <label class="switch">
+                                    <input type="checkbox" class="bot-toggle" data-key="{{ bot.key }}" {% if bot.is_active %}checked{% endif %}>
+                                    <span class="slider round"></span>
+                                </label>
+                            </td>
+                            <td>
+                                <div class="bot-name">{{ bot.name }}</div>
+                                <div class="bot-key">{{ bot.key }}</div>
+                            </td>
+                            <td>
+                                <span class="badge badge-type badge-{{ bot.strategy_type }}">
+                                    {{ bot.strategy_type|upper }}
+                                </span>
+                            </td>
+                            <td><strong>{{ bot.symbol }}</strong></td>
+                            <td class="mono params-col">
+                                {% for k, v in bot.parameters.items() %}
+                                    <span>{{ k }}: {{ v }}</span>{% if not loop.last %} | {% endif %}
+                                {% endfor %}
+                            </td>
+                            <td>{{ "%.2f"|format(bot.allocation_eur) }} €</td>
+                            <td class="text-right">
+                                <button class="btn btn-icon btn-danger btn-delete-bot" data-key="{{ bot.key }}" title="Eliminar bot">
+                                    🗑️
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Sección de Posición Abierta -->
+        <section class="card section-card">
+            <div class="section-header">
+                <h2>💼 Posición Abierta Actual</h2>
+            </div>
+            <div id="position-container">
+                {% if data.open_positions %}
+                    {% for p in data.open_positions %}
+                    <div class="position-banner">
+                        <div class="pos-item">
+                            <span class="pos-label">Par / Lado</span>
+                            <span class="pos-value"><strong>{{ p.symbol }}</strong> ({{ p.side|upper }})</span>
+                        </div>
+                        <div class="pos-item">
+                            <span class="pos-label">Cantidad</span>
+                            <span class="pos-value">{{ p.quantity }}</span>
+                        </div>
+                        <div class="pos-item">
+                            <span class="pos-label">Precio Entrada</span>
+                            <span class="pos-value">{{ "%.2f"|format(p.entry_price) }} USDT</span>
+                        </div>
+                        <div class="pos-item">
+                            <span class="pos-label">Precio Actual</span>
+                            <span class="pos-value">{% if p.current_price %}{{ "%.2f"|format(p.current_price) }} USDT{% else %}N/D{% endif %}</span>
+                        </div>
+                        <div class="pos-item">
+                            <span class="pos-label">PnL Flotante</span>
+                            <span class="pos-value {% if p.unrealized_pnl_eur and p.unrealized_pnl_eur >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                {% if p.unrealized_pnl_eur is not None %}{{ "%+.2f"|format(p.unrealized_pnl_eur) }} € ({{ "%+.2f"|format(p.unrealized_pnl_pct) }}%){% else %}0.00 €{% endif %}
+                            </span>
+                        </div>
+                        <div class="pos-item">
+                            <span class="pos-label">Stop-Loss (-3%)</span>
+                            <span class="pos-value text-danger">{{ "%.2f"|format(p.stop_loss_price) }} USDT</span>
+                        </div>
+                        <div class="pos-item">
+                            <span class="pos-label">Take-Profit (+5%)</span>
+                            <span class="pos-value text-success">{{ "%.2f"|format(p.take_profit_price) }} USDT</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty-state">
+                        <span>🛡️</span>
+                        <p>No hay posiciones abiertas en este momento. El capital está 100% disponible.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </section>
+
+        <!-- Historial y Saldos -->
+        <div class="split-grid">
+            <section class="card section-card">
+                <div class="section-header">
+                    <h3>📜 Últimas Operaciones Cerradas</h3>
+                </div>
+                <div id="recent-trades-container">
+                    {% if data.recent_closed_positions %}
+                    <table class="mini-table">
+                        <thead>
+                            <tr>
+                                <th>Par</th>
+                                <th>Entrada</th>
+                                <th>Salida</th>
+                                <th>PnL (€)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for c in data.recent_closed_positions[:5] %}
+                            <tr>
+                                <td>{{ c.symbol }}</td>
+                                <td>{{ "%.2f"|format(c.entry_price) }}</td>
+                                <td>{{ "%.2f"|format(c.exit_price or 0) }}</td>
+                                <td class="{% if c.realized_pnl and c.realized_pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                    {{ "%+.2f"|format(c.realized_pnl or 0) }} €
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="empty-text">Sin historial de operaciones cerradas todavía.</p>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="card section-card">
+                <div class="section-header">
+                    <h3>💰 Saldos Binance Testnet</h3>
+                </div>
+                <div id="balances-container" class="balance-chips">
+                    {% for b in data.binance_balances[:6] %}
+                    <div class="chip">
+                        <span class="chip-asset">{{ b.asset }}</span>
+                        <span class="chip-qty">{{ "%.4f"|format(b.free|float) }}</span>
+                    </div>
+                    {% else %}
+                    <p class="empty-text">Conectando con Binance Testnet...</p>
+                    {% endfor %}
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Modal de Creación de Bot -->
+    <div id="create-bot-modal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>➕ Crear Nuevo Bot de Trading</h3>
+                <button id="btn-close-modal" class="btn-close">&times;</button>
+            </div>
+            <form id="create-bot-form">
+                <div class="form-group">
+                    <label for="bot-name">Nombre del Bot</label>
+                    <input type="text" id="bot-name" name="name" placeholder="Ej: Bot Rápido Scalping BTC" required>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bot-type">Tipo de Estrategia</label>
+                        <select id="bot-type" name="strategy_type" required>
+                            <option value="ema_cross">Cruce de EMAs (Tendencia)</option>
+                            <option value="rsi">RSI Reversión (Sobreventa/Sobrecompra)</option>
+                            <option value="bollinger">Bandas de Bollinger (Ruptura)</option>
+                            <option value="macd">MACD (Momento / Impulso)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="bot-symbol">Par / Símbolo (Spot)</label>
+                        <select id="bot-symbol" name="symbol" required>
+                            {% for sym in available_symbols %}
+                            <option value="{{ sym }}" {% if sym == 'BTCUSDT' %}selected{% endif %}>{{ sym }}</option>
+                            {% else %}
+                            <option value="BTCUSDT" selected>BTCUSDT</option>
+                            <option value="ETHUSDT">ETHUSDT</option>
+                            <option value="BNBUSDT">BNBUSDT</option>
+                            <option value="SOLUSDT">SOLUSDT</option>
+                            <option value="ADAUSDT">ADAUSDT</option>
+                            <option value="XRPUSDT">XRPUSDT</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Parámetros dinámicos según estrategia -->
+                <div id="dynamic-params-container" class="dynamic-params-box">
+                    <!-- EMA -->
+                    <div class="strategy-param-group" id="params-ema_cross">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="fast_period">EMA Rápida</label>
+                                <input type="number" id="fast_period" name="fast_period" value="9" min="1" max="100">
+                            </div>
+                            <div class="form-group">
+                                <label for="slow_period">EMA Lenta</label>
+                                <input type="number" id="slow_period" name="slow_period" value="21" min="2" max="500">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- RSI -->
+                    <div class="strategy-param-group hidden" id="params-rsi">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="rsi_period">Periodo RSI</label>
+                                <input type="number" id="rsi_period" name="period" value="14" min="2" max="100">
+                            </div>
+                            <div class="form-group">
+                                <label for="rsi_oversold">Sobreventa (Buy)</label>
+                                <input type="number" id="rsi_oversold" name="oversold" value="30" min="1" max="50">
+                            </div>
+                            <div class="form-group">
+                                <label for="rsi_overbought">Sobrecompra (Sell)</label>
+                                <input type="number" id="rsi_overbought" name="overbought" value="70" min="50" max="99">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bollinger -->
+                    <div class="strategy-param-group hidden" id="params-bollinger">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="boll_period">Periodo SMA</label>
+                                <input type="number" id="boll_period" name="period" value="20" min="2" max="200">
+                            </div>
+                            <div class="form-group">
+                                <label for="boll_std">Desviación Típica</label>
+                                <input type="number" id="boll_std" name="std_dev_multiplier" value="2.0" step="0.1" min="0.5" max="5.0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- MACD -->
+                    <div class="strategy-param-group hidden" id="params-macd">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="macd_fast">EMA Rápida</label>
+                                <input type="number" id="macd_fast" name="fast_period" value="12" min="1" max="100">
+                            </div>
+                            <div class="form-group">
+                                <label for="macd_slow">EMA Lenta</label>
+                                <input type="number" id="macd_slow" name="slow_period" value="26" min="2" max="200">
+                            </div>
+                            <div class="form-group">
+                                <label for="macd_signal">Señal EMA</label>
+                                <input type="number" id="macd_signal" name="signal_period" value="9" min="1" max="50">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="bot-alloc">Asignación de Capital (EUR)</label>
+                    <input type="number" id="bot-alloc" name="allocation_eur" value="20.0" min="5.0" max="100.0" step="1.0" required>
+                    <small class="form-hint">Máximo 20.00 € recomendado según reglas de riesgo central.</small>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" id="btn-cancel-modal" class="btn btn-secondary">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Crear Bot</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
+

@@ -215,6 +215,26 @@ def get_open_positions(symbol: str | None = None) -> list[TradePosition]:
         return list(session.scalars(statement).all())
 
 
+def get_recent_positions(limit: int = 10) -> list[TradePosition]:
+    with SessionLocal() as session:
+        statement = (
+            select(TradePosition)
+            .order_by(TradePosition.opened_at.desc())
+            .limit(limit)
+        )
+        return list(session.scalars(statement).all())
+
+
+def get_recent_orders(limit: int = 10) -> list[TradeOrder]:
+    with SessionLocal() as session:
+        statement = (
+            select(TradeOrder)
+            .order_by(TradeOrder.submitted_at.desc())
+            .limit(limit)
+        )
+        return list(session.scalars(statement).all())
+
+
 def close_position(
     position_id: int,
     *,

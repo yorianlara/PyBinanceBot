@@ -166,6 +166,35 @@ class BinanceMarketClient:
         response.raise_for_status()
         return response.json()
 
+    def get_exchange_symbols(self, quote_asset: str = "USDT") -> list[str]:
+        """Obtiene la lista de pares de trading activos para Spot en Binance."""
+        fallback = [
+            "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT",
+            "ADAUSDT", "XRPUSDT", "DOGEUSDT", "AVAXUSDT",
+            "DOTUSDT", "LINKUSDT", "MATICUSDT", "LTCUSDT",
+        ]
+        try:
+            response = self.client.get("/api/v3/exchangeInfo")
+            response.raise_for_status()
+            data = response.json()
+            symbols = [
+                s["symbol"]
+                for s in data.get("symbols", [])
+                if s.get("status") == "TRADING"
+                and s.get("quoteAsset") == quote_asset.upper()
+                and s.get("isSpotTradingAllowed", True)
+            ]
+            if not symbols:
+                return fallback
+
+            # Priorizar los pares más líquidos al inicio
+            priority = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT"]
+            ordered = [s for s in priority if s in symbols]
+            remaining = sorted([s for s in symbols if s not in priority])
+            return ordered + remaining
+        except Exception:
+            return fallback
+
     def close(self):
         self.client.close()
 

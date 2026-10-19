@@ -55,6 +55,51 @@ class PersistentRiskManager:
 
         return account
 
+    def get_account_summary(self) -> dict:
+        """Devuelve un resumen del estado del gestor de riesgo y capital."""
+        with SessionLocal() as session:
+            account = self._get_account(session)
+            allocations = session.scalars(
+                select(RiskAllocation).where(RiskAllocation.status == "active")
+            ).all()
+
+            total_allocated = sum((r.amount_eur for r in allocations), Decimal("0"))
+            max_daily_loss = Decimal(str(self.config.max_daily_loss_eur))
+            max_total_loss = Decimal(str(self.config.max_total_loss_eur))
+            max_capital = Decimal(str(self.config.max_capital_eur))
+
+            is_trading_allowed = (
+                account.daily_pnl_eur > -max_daily_loss
+                and account.total_pnl_eur > -max_total_loss
+                and len(allocations) < self.config.max_open_positions
+                and total_allocated < max_capital
+            )
+
+            return {
+                "max_capital_eur": max_capital,
+                "max_allocation_per_strategy_eur": Decimal(
+                    str(self.config.max_allocation_per_strategy_eur)
+                ),
+                "max_open_positions": self.config.max_open_positions,
+                "daily_pnl_eur": account.daily_pnl_eur,
+                "total_pnl_eur": account.total_pnl_eur,
+                "max_daily_loss_eur": max_daily_loss,
+                "max_total_loss_eur": max_total_loss,
+                "active_allocations": len(allocations),
+                "total_allocated_eur": total_allocated,
+                "trading_allowed": is_trading_allowed,
+                "allocations": [
+                    {
+                        "strategy_key": a.strategy_key,
+                        "amount_eur": a.amount_eur,
+                        "allocation_type": a.allocation_type,
+                        "order_id": a.order_id,
+                        "position_id": a.position_id,
+                    }
+                    for a in allocations
+                ],
+            }
+
     def _check_limits(
         self,
         session,

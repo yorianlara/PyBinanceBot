@@ -224,14 +224,17 @@ def build_default_engine(
     eur_to_usdt: Decimal = Decimal("1.08"),
     risk_config: RiskConfig | None = None,
     exit_config: ExitConfig | None = None,
+    strategies: list[Strategy] | None = None,
 ) -> TradingEngine:
     """Construye un TradingEngine con la configuración estándar del sistema."""
-    strategies: list[Strategy] = [
-        EmaCrossStrategy(fast_period=9, slow_period=21),
-        RsiStrategy(period=14),
-        BollingerBreakoutStrategy(period=20, std_dev_multiplier=Decimal("2.0")),
-        MacdStrategy(fast_period=12, slow_period=26, signal_period=9),
-    ]
+    if strategies is None:
+        strategies = [
+            EmaCrossStrategy(fast_period=9, slow_period=21),
+            RsiStrategy(period=14),
+            BollingerBreakoutStrategy(period=20, std_dev_multiplier=Decimal("2.0")),
+            MacdStrategy(fast_period=12, slow_period=26, signal_period=9),
+        ]
+
     coordinator = StrategyCoordinator(strategies)
     risk_manager = PersistentRiskManager(config=risk_config or DEFAULT_RISK_CONFIG)
     binance_client = BinanceMarketClient()

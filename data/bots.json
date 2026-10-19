@@ -1,0 +1,71 @@
+{
+  "bots": [
+    {
+      "key": "ema_cross_9_21",
+      "name": "Bot Tendencia (EMA 9/21)",
+      "strategy_type": "ema_cross",
+      "symbol": "BTCUSDT",
+      "parameters": {
+        "fast_period": 9,
+        "slow_period": 21
+      },
+      "allocation_eur": "20.00",
+      "is_active": false,
+      "created_at": "2026-10-19T14:26:57.546439+00:00"
+    },
+    {
+      "key": "rsi_14",
+      "name": "Bot Reversión (RSI 14)",
+      "strategy_type": "rsi",
+      "symbol": "BTCUSDT",
+      "parameters": {
+        "period": 14,
+        "oversold": 30,
+        "overbought": 70
+      },
+      "allocation_eur": "20.00",
+      "is_active": false,
+      "created_at": "2026-10-19T14:26:57.546439+00:00"
+    },
+    {
+      "key": "bollinger_20_2",
+      "name": "Bot Rupturas (Bollinger 20/2.0)",
+      "strategy_type": "bollinger",
+      "symbol": "BTCUSDT",
+      "parameters": {
+        "period": 20,
+        "std_dev_multiplier": 2.0
+      },
+      "allocation_eur": "20.00",
+      "is_active": true,
+      "created_at": "2026-10-19T14:26:57.546439+00:00"
+    },
+    {
+      "key": "macd_12_26_9",
+      "name": "Bot Impulso (MACD 12/26/9)",
+      "strategy_type": "macd",
+      "symbol": "BTCUSDT",
+      "parameters": {
+        "fast_period": 12,
+        "slow_period": 26,
+        "signal_period": 9
+      },
+      "allocation_eur": "20.00",
+      "is_active": true,
+      "created_at": "2026-10-19T14:26:57.546439+00:00"
+    },
+    {
+      "key": "ema_cross_ethusdt_5",
+      "name": "xxxxx",
+      "strategy_type": "ema_cross",
+      "symbol": "ETHUSDT",
+      "parameters": {
+        "fast_period": 9,
+        "slow_period": 21
+      },
+      "allocation_eur": "20",
+      "is_active": true,
+      "created_at": "2026-10-19T14:28:36.747824+00:00"
+    }
+  ]
+}
