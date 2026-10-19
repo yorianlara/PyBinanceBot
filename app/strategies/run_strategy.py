@@ -6,6 +6,7 @@ from app.storage.repository import get_latest_candles
 from app.strategies.base import StrategyContext
 from app.strategies.coordinator import StrategyCoordinator
 from app.strategies.ema_cross import EmaCrossStrategy
+from app.strategies.rsi import RsiStrategy
 
 
 def main() -> int:
@@ -17,14 +18,19 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--fast", type=int, default=9)
     parser.add_argument("--slow", type=int, default=21)
+    parser.add_argument("--rsi-period", type=int, default=14)
     args = parser.parse_args()
 
     if not 1 <= args.limit <= 5000:
         parser.error("--limit debe estar entre 1 y 5000.")
 
-    strategy = EmaCrossStrategy(
+    ema_strategy = EmaCrossStrategy(
         fast_period=args.fast,
         slow_period=args.slow,
+    )
+
+    rsi_strategy = RsiStrategy(
+        period=args.rsi_period,
     )
 
     candles = get_latest_candles(
@@ -39,7 +45,11 @@ def main() -> int:
         candles=candles,
     )
 
-    coordinator = StrategyCoordinator([strategy])
+    coordinator = StrategyCoordinator([
+        ema_strategy,
+        rsi_strategy,
+    ])
+    
     results = coordinator.run(context, mode="testnet")
 
     output = {
