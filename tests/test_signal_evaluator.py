@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.risk.signal_evaluator import evaluate_signals
 from app.strategies.base import StrategySignal
@@ -9,7 +9,7 @@ def make_signal(side: str) -> StrategySignal:
         symbol="BTCUSDT",
         side=side,
         reason="test",
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
     )
 
 
@@ -23,13 +23,13 @@ def test_buy_is_candidate():
     assert result[0].side == "BUY"
 
 
-def test_sell_is_rejected():
+def test_sell_is_an_exit_candidate():
     result = evaluate_signals(
         {"rsi_14": [make_signal("SELL")]}
     )
 
     assert len(result) == 1
-    assert result[0].status == "rejected"
+    assert result[0].status == "exit_candidate"
 
 
 def test_strategies_are_evaluated_independently():

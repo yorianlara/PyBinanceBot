@@ -10,6 +10,7 @@ class StrategyCoordinator:
             raise ValueError("Las claves de las estrategias deben ser únicas.")
 
         self.strategies = strategies
+        self.last_run_id: int | None = None
 
     def run(
         self,
@@ -20,6 +21,7 @@ class StrategyCoordinator:
             mode=mode,
             details=f"Coordinador: {len(self.strategies)} estrategias",
         )
+        self.last_run_id = run_id
 
         results: dict[str, list[StrategySignal]] = {}
 

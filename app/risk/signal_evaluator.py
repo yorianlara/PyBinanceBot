@@ -1,5 +1,6 @@
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Mapping, Sequence
+from typing import Literal
 
 from app.strategies.base import StrategySignal
 
@@ -9,7 +10,7 @@ class SignalDecision:
     strategy_key: str
     symbol: str
     side: str
-    status: Literal["candidate", "rejected"]
+    status: Literal["candidate", "exit_candidate", "rejected"]
     reason: str
 
 
@@ -30,6 +31,16 @@ def evaluate_signals(
                         reason="Pendiente de validación por el gestor de riesgo",
                     )
                 )
+            elif signal.side == "SELL":
+                decisions.append(
+                    SignalDecision(
+                        strategy_key=strategy_key,
+                        symbol=signal.symbol,
+                        side=signal.side,
+                        status="exit_candidate",
+                        reason="Señal de salida pendiente de cierre.",
+                    )
+                )
             else:
                 decisions.append(
                     SignalDecision(
@@ -37,7 +48,7 @@ def evaluate_signals(
                         symbol=signal.symbol,
                         side=signal.side,
                         status="rejected",
-                        reason="La gestión actual solo admite entradas BUY",
+                        reason=f"Dirección de señal no admitida: {signal.side}",
                     )
                 )
 

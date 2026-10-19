@@ -60,6 +60,7 @@ def test_runs_multiple_strategies(monkeypatch):
 
     assert results["ema"] == [signal]
     assert results["rsi"] == []
+    assert coordinator.last_run_id == 123
     assert finished == [(123, {"status": "completed"})]
 
 

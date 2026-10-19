@@ -1,26 +1,32 @@
-import pytest
-
-from app.storage.models import TradeFill, TradeOrder
-from app.storage.repository import add_fill, create_order
-
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import delete, select
 
 from app.storage.database import SessionLocal
-from app.storage.models import BotRun, MarketCandle
+from app.storage.models import (
+    BotRun,
+    MarketCandle,
+    TradeFill,
+    TradeOrder,
+    TradePosition,
+)
 from app.storage.repository import (
+    add_fill,
+    create_order,
     create_run,
     finish_run,
     get_latest_candles,
+    get_open_position,
+    open_position,
     upsert_candle,
 )
 
 
 def test_repository_saves_and_updates_candles():
     run_id = create_run(mode="testnet", details="Prueba automatizada")
-    open_time = datetime.now(timezone.utc).replace(microsecond=0)
+    open_time = datetime.now(UTC).replace(microsecond=0)
     symbol = "TESTREPOSITORY"
 
     try:
@@ -29,22 +35,22 @@ def test_repository_saves_and_updates_candles():
             "interval": "1m",
             "open_time": open_time,
             "close_time": open_time + timedelta(minutes=1),
-            "open_price": Decimal("100"),
-            "high": Decimal("105"),
-            "low": Decimal("99"),
-            "close": Decimal("103"),
-            "volume": Decimal("10"),
+            "open_price": Decimal(100),
+            "high": Decimal(105),
+            "low": Decimal(99),
+            "close": Decimal(103),
+            "volume": Decimal(10),
             "is_closed": True,
         }
 
         upsert_candle(**values)
-        values["close"] = Decimal("104")
+        values["close"] = Decimal(104)
         upsert_candle(**values)
 
         candles = get_latest_candles(symbol, "1m", limit=10)
 
         assert len(candles) == 1
-        assert candles[0].close == Decimal("104")
+        assert candles[0].close == Decimal(104)
 
         finish_run(run_id, status="completed")
 
@@ -57,9 +63,8 @@ def test_repository_saves_and_updates_candles():
                     MarketCandle.open_time == open_time,
                 )
             )
-            session.execute(
-                delete(BotRun).where(BotRun.id == run_id)
-            )
+            session.execute(delete(BotRun).where(BotRun.id == run_id))
+
 
 def test_add_fill_persists_execution():
     client_trade_id = f"test-{__import__('uuid').uuid4().hex}"
@@ -76,8 +81,8 @@ def test_add_fill_persists_execution():
         fill_id = add_fill(
             order_id=order_id,
             quantity=Decimal("0.001"),
-            price=Decimal("50000"),
-            executed_at=datetime.now(timezone.utc),
+            price=Decimal(50000),
+            executed_at=datetime.now(UTC),
             exchange_trade_id=client_trade_id,
             commission=Decimal("0.000001"),
             commission_asset="BTC",
@@ -94,14 +99,8 @@ def test_add_fill_persists_execution():
             assert fill.commission_asset == "BTC"
     finally:
         with SessionLocal.begin() as session:
-            session.execute(
-                delete(TradeFill).where(
-                    TradeFill.order_id == order_id
-                )
-            )
-            session.execute(
-                delete(TradeOrder).where(TradeOrder.id == order_id)
-            )
+            session.execute(delete(TradeFill).where(TradeFill.order_id == order_id))
+            session.execute(delete(TradeOrder).where(TradeOrder.id == order_id))
 
 
 def test_add_fill_ignores_duplicate_exchange_trade_id():
@@ -119,15 +118,15 @@ def test_add_fill_ignores_duplicate_exchange_trade_id():
         first_id = add_fill(
             order_id=order_id,
             quantity=Decimal("0.001"),
-            price=Decimal("50000"),
-            executed_at=datetime.now(timezone.utc),
+            price=Decimal(50000),
+            executed_at=datetime.now(UTC),
             exchange_trade_id=exchange_trade_id,
         )
         duplicate_id = add_fill(
             order_id=order_id,
             quantity=Decimal("0.001"),
-            price=Decimal("50000"),
-            executed_at=datetime.now(timezone.utc),
+            price=Decimal(50000),
+            executed_at=datetime.now(UTC),
             exchange_trade_id=exchange_trade_id,
         )
 
@@ -143,21 +142,58 @@ def test_add_fill_ignores_duplicate_exchange_trade_id():
             assert len(fills) == 1
     finally:
         with SessionLocal.begin() as session:
-            session.execute(
-                delete(TradeFill).where(
-                    TradeFill.order_id == order_id
-                )
-            )
-            session.execute(
-                delete(TradeOrder).where(TradeOrder.id == order_id)
-            )
+            session.execute(delete(TradeFill).where(TradeFill.order_id == order_id))
+            session.execute(delete(TradeOrder).where(TradeOrder.id == order_id))
 
 
 def test_add_fill_rejects_invalid_values():
     with pytest.raises(ValueError, match="positivos"):
         add_fill(
             order_id=1,
-            quantity=Decimal("0"),
-            price=Decimal("50000"),
-            executed_at=datetime.now(timezone.utc),
+            quantity=Decimal(0),
+            price=Decimal(50000),
+            executed_at=datetime.now(UTC),
         )
+
+
+def test_get_open_position_returns_only_unambiguous_position():
+    symbol = f"TEST{__import__('uuid').uuid4().hex[:12]}"
+    position_id = open_position(
+        symbol=symbol,
+        quantity=Decimal("0.001"),
+        entry_price=Decimal(50000),
+    )
+
+    try:
+        position = get_open_position(symbol.lower())
+
+        assert position is not None
+        assert position.id == position_id
+        assert position.symbol == symbol.upper()
+        assert get_open_position("NOOPENPOSITION") is None
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(
+                delete(TradePosition).where(TradePosition.id == position_id)
+            )
+
+
+def test_get_open_position_rejects_ambiguous_positions():
+    symbol = f"TEST{__import__('uuid').uuid4().hex[:12]}"
+    position_ids = [
+        open_position(
+            symbol=symbol,
+            quantity=Decimal("0.001"),
+            entry_price=Decimal(50000),
+        )
+        for _ in range(2)
+    ]
+
+    try:
+        with pytest.raises(RuntimeError, match="varias posiciones"):
+            get_open_position(symbol)
+    finally:
+        with SessionLocal.begin() as session:
+            session.execute(
+                delete(TradePosition).where(TradePosition.id.in_(position_ids))
+            )

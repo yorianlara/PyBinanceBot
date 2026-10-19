@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101713">
+  <title>PyBinanceBot · Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="PyBinanceBot inicio">
+        <span class="brand-mark">P</span>
+        <span>PyBinance<span class="brand-muted">Bot</span></span>
+      </a>
+      <div class="nav-label">ESPACIO DE TRABAJO</div>
+      <a class="nav-item active" href="#overview"><span class="nav-icon">◫</span>Resumen</a>
+      <a class="nav-item" href="#positions"><span class="nav-icon">↗</span>Posiciones</a>
+      <a class="nav-item" href="#orders"><span class="nav-icon">⇄</span>Órdenes</a>
+      <a class="nav-item" href="#runs"><span class="nav-icon">◷</span>Ejecuciones</a>
+      <div class="sidebar-bottom">
+        <div class="local-badge"><span class="live-dot"></span>Panel local · Solo lectura</div>
+        <div class="sidebar-note">Los datos se consultan de la base de datos local. El dashboard no opera órdenes.</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="breadcrumbs">Bot <span>/</span> <strong>Resumen</strong></div>
+        <div class="topbar-right">
+          <span class="environment"><i></i> BINANCE SPOT TESTNET</span>
+          <button id="refresh" class="refresh-button" type="button" aria-label="Actualizar ahora">↻ <span>Actualizar</span></button>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="page-heading" id="overview">
+          <div>
+            <p class="eyebrow">CENTRO DE CONTROL</p>
+            <h1>Resumen de trading</h1>
+            <p class="subtitle">Estado de estrategias, riesgo y actividad reciente.</p>
+          </div>
+          <div class="last-updated"><span class="live-dot"></span><span id="updated-at">Conectando…</span></div>
+        </section>
+
+        <div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+        <section class="metrics" aria-label="Indicadores">
+          <article class="metric-card">
+            <div class="metric-top"><span>Posiciones abiertas</span><span class="metric-icon violet">↗</span></div>
+            <div id="open-positions" class="metric-value">—</div>
+            <div class="metric-foot">Spot · Long</div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-top"><span>PnL realizado</span><span class="metric-icon green">€</span></div>
+            <div id="realized-pnl" class="metric-value">—</div>
+            <div class="metric-foot">EUR · Puede excluir fees en activos externos</div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-top"><span>Control de riesgo</span><span class="metric-icon amber">◇</span></div>
+            <div id="risk-status" class="metric-value metric-value-small">—</div>
+            <div id="daily-pnl" class="metric-foot">Último snapshot</div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-top"><span>Última ejecución</span><span class="metric-icon blue">◷</span></div>
+            <div id="run-status" class="metric-value metric-value-small">—</div>
+            <div id="run-time" class="metric-foot">Sin ejecuciones</div>
+          </article>
+        </section>
+
+        <section class="panel chart-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="panel-title">Mercado <span class="market-symbol">{{ symbol }}</span></div>
+              <div class="panel-subtitle">Últimas velas cerradas · {{ interval }}</div>
+            </div>
+            <div id="market-price" class="market-price">—</div>
+          </div>
+          <div class="chart-wrap">
+            <svg id="price-chart" viewBox="0 0 900 220" preserveAspectRatio="none" role="img" aria-label="Gráfico de precio"></svg>
+            <div id="chart-empty" class="empty-overlay" hidden>Sin velas disponibles para este mercado.</div>
+          </div>
+          <div class="chart-footer"><span id="chart-range">Cargando datos de mercado…</span><span>Fuente: velas guardadas</span></div>
+        </section>
+
+        <div class="data-grid">
+          <section class="panel" id="positions">
+            <div class="panel-heading">
+              <div><div class="panel-title">Posiciones abiertas</div><div class="panel-subtitle">Inventario Spot registrado</div></div>
+              <span id="position-count" class="count-pill">0</span>
+            </div>
+            <div class="table-scroll">
+              <table><thead><tr><th>SÍMBOLO</th><th>LADO</th><th>CANTIDAD</th><th>ENTRADA</th><th>ABIERTA</th></tr></thead>
+                <tbody id="positions-body"></tbody>
+              </table>
+              <div id="positions-empty" class="empty-state" hidden>No hay posiciones abiertas.</div>
+            </div>
+          </section>
+
+          <section class="panel" id="orders">
+            <div class="panel-heading">
+              <div><div class="panel-title">Órdenes recientes</div><div class="panel-subtitle">Últimas 20 registradas</div></div>
+              <span class="section-mark">ACTIVIDAD</span>
+            </div>
+            <div class="table-scroll">
+              <table><thead><tr><th>SÍMBOLO</th><th>TIPO</th><th>CANTIDAD</th><th>ESTADO</th></tr></thead>
+                <tbody id="orders-body"></tbody>
+              </table>
+              <div id="orders-empty" class="empty-state" hidden>No hay órdenes registradas.</div>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel runs-panel" id="runs">
+          <div class="panel-heading">
+            <div><div class="panel-title">Ejecuciones recientes</div><div class="panel-subtitle">Historial del coordinador de estrategias</div></div>
+            <span class="section-mark">ÚLTIMAS 10</span>
+          </div>
+          <div class="table-scroll">
+            <table><thead><tr><th>ID</th><th>MODO</th><th>ESTADO</th><th>INICIO</th><th>FINALIZACIÓN</th></tr></thead>
+              <tbody id="runs-body"></tbody>
+            </table>
+            <div id="runs-empty" class="empty-state" hidden>Aún no hay ejecuciones.</div>
+          </div>
+        </section>
+        <footer class="footer">PyBinanceBot <span>·</span> Dashboard local de solo lectura</footer>
+      </div>
+    </main>
+  </div>
+  <script>
+    (() => {
+      const apiUrl = {{ url_for('dashboard_data')|tojson }};
+      const symbol = {{ symbol|tojson }};
+      const interval = {{ interval|tojson }};
+      const byId = (id) => document.getElementById(id);
+      const formatNumber = (value, digits = 4) => {
+        if (value === null || value === undefined) return "—";
+        const number = Number(value);
+        return Number.isFinite(number) ? number.toLocaleString("es-ES", {
+          minimumFractionDigits: 0, maximumFractionDigits: digits
+        }) : "—";
+      };
+      const formatDate = (value) => value ? new Date(value).toLocaleString("es-ES", {
+        dateStyle: "medium", timeStyle: "short"
+      }) : "—";
+      const setText = (id, text) => { byId(id).textContent = text; };
+      const makeCell = (row, value, className = "") => {
+        const cell = document.createElement("td");
+        cell.textContent = value ?? "—";
+        if (className) cell.className = className;
+        row.appendChild(cell);
+      };
+      const statusClass = (status) => {
+        const normalized = String(status || "").toLowerCase();
+        if (["completed", "reconciled", "filled", "closed"].includes(normalized)) return "status status-good";
+        if (["running", "new", "pending_submission"].includes(normalized)) return "status status-pending";
+        if (["failed", "rejected", "canceled", "expired"].includes(normalized)) return "status status-bad";
+        return "status";
+      };
+      const drawChart = (candles) => {
+        const svg = byId("price-chart");
+        svg.replaceChildren();
+        byId("chart-empty").hidden = candles.length > 0;
+        if (!candles.length) {
+          setText("chart-range", "No hay datos de mercado");
+          return;
+        }
+        const values = candles.map((item) => Number(item.close)).filter(Number.isFinite);
+        if (!values.length) return;
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const spread = max - min || Math.max(Math.abs(max) * 0.002, 1);
+        const points = values.map((value, index) => {
+          const x = 8 + (index / Math.max(values.length - 1, 1)) * 884;
+          const y = 202 - ((value - (min - spread * 0.08)) / (spread * 1.16)) * 184;
+          return `${x},${y}`;
+        }).join(" ");
+        const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+        const gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+        gradient.setAttribute("id", "chart-gradient");
+        gradient.setAttribute("x1", "0"); gradient.setAttribute("x2", "0");
+        gradient.setAttribute("y1", "0"); gradient.setAttribute("y2", "1");
+        [["0", "#69e0a0", "0.22"], ["1", "#69e0a0", "0"]].forEach(([offset, color, opacity]) => {
+          const stop = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+          stop.setAttribute("offset", offset); stop.setAttribute("stop-color", color);
+          stop.setAttribute("stop-opacity", opacity); gradient.appendChild(stop);
+        });
+        defs.appendChild(gradient);
+        svg.appendChild(defs);
+        const area = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        area.setAttribute("points", `8,220 ${points} 892,220`);
+        area.setAttribute("fill", "url(#chart-gradient)");
+        svg.appendChild(area);
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+        line.setAttribute("points", points);
+        line.setAttribute("fill", "none");
+        line.setAttribute("stroke", "#69e0a0");
+        line.setAttribute("stroke-width", "2.5");
+        line.setAttribute("stroke-linecap", "round");
+        line.setAttribute("stroke-linejoin", "round");
+        svg.appendChild(line);
+        setText("chart-range", `${formatDate(candles[0].time)} — ${formatDate(candles[candles.length - 1].time)}`);
+      };
+      const renderRows = (id, emptyId, items, renderRow) => {
+        const body = byId(id);
+        body.replaceChildren();
+        items.forEach((item) => {
+          const row = document.createElement("tr");
+          renderRow(row, item);
+          body.appendChild(row);
+        });
+        byId(emptyId).hidden = items.length > 0;
+      };
+      const refresh = async () => {
+        const error = byId("error-banner");
+        try {
+          const response = await fetch(`${apiUrl}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}`, {
+            headers: { "Accept": "application/json" }, cache: "no-store"
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "No se pudieron cargar los datos.");
+          error.hidden = true;
+          setText("updated-at", `Actualizado ${new Date(data.updated_at).toLocaleTimeString("es-ES")}`);
+          setText("open-positions", String(data.summary.open_positions));
+          setText("realized-pnl", `${formatNumber(data.summary.realized_pnl_eur, 2)} €`);
+          const pnl = Number(data.summary.realized_pnl_eur);
+          byId("realized-pnl").classList.toggle("negative", pnl < 0);
+          byId("realized-pnl").classList.toggle("positive", pnl >= 0);
+          const allowed = data.summary.risk_allowed;
+          setText("risk-status", allowed === null ? "Sin datos" : allowed ? "Dentro del límite" : "Límite alcanzado");
+          byId("risk-status").className = `metric-value metric-value-small ${allowed === true ? "positive" : allowed === false ? "negative" : ""}`;
+          setText("daily-pnl", data.summary.daily_pnl_eur === null
+            ? "No hay snapshot de riesgo"
+            : `PnL diario: ${formatNumber(data.summary.daily_pnl_eur, 2)} €`);
+          setText("run-status", data.summary.latest_run_status || "Sin datos");
+          setText("run-time", data.summary.latest_run_at ? formatDate(data.summary.latest_run_at) : "Sin ejecuciones");
+          setText("market-price", data.market.latest_price === null
+            ? "Sin precio"
+            : `${formatNumber(data.market.latest_price, 2)} USDT`);
+          drawChart(data.market.candles);
+          byId("position-count").textContent = String(data.positions.length);
+          renderRows("positions-body", "positions-empty", data.positions, (row, item) => {
+            makeCell(row, item.symbol, "symbol-cell");
+            makeCell(row, item.side.toUpperCase());
+            makeCell(row, formatNumber(item.quantity, 8), "number-cell");
+            makeCell(row, `${formatNumber(item.entry_price, 4)} USDT`, "number-cell");
+            makeCell(row, formatDate(item.opened_at));
+          });
+          renderRows("orders-body", "orders-empty", data.orders, (row, item) => {
+            makeCell(row, item.symbol, "symbol-cell");
+            makeCell(row, `${item.side.toUpperCase()} · ${item.order_type}`);
+            makeCell(row, formatNumber(item.quantity, 8), "number-cell");
+            makeCell(row, item.status, statusClass(item.status));
+          });
+          renderRows("runs-body", "runs-empty", data.runs, (row, item) => {
+            makeCell(row, `#${item.id}`, "number-cell");
+            makeCell(row, item.mode.toUpperCase());
+            makeCell(row, item.status, statusClass(item.status));
+            makeCell(row, formatDate(item.started_at));
+            makeCell(row, formatDate(item.finished_at));
+          });
+        } catch (exception) {
+          error.textContent = `No se pudo actualizar el dashboard: ${exception.message}`;
+          error.hidden = false;
+        }
+      };
+      byId("refresh").addEventListener("click", refresh);
+      refresh();
+      window.setInterval(refresh, 15000);
+    })();
+  </script>
+</body>
+</html>

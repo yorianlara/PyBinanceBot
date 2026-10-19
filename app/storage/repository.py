@@ -103,6 +103,25 @@ def get_latest_candles(
         return list(reversed(session.scalars(statement).all()))
 
 
+def get_open_position(symbol: str) -> TradePosition | None:
+    with SessionLocal() as session:
+        positions = session.scalars(
+            select(TradePosition)
+            .where(
+                TradePosition.symbol == symbol.upper(),
+                TradePosition.side == "long",
+                TradePosition.status == "open",
+            )
+            .order_by(TradePosition.opened_at)
+        ).all()
+        if len(positions) > 1:
+            raise RuntimeError(
+                f"Hay varias posiciones abiertas para {symbol.upper()}; "
+                "no se puede determinar de forma segura cuál cerrar."
+            )
+        return positions[0] if positions else None
+
+
 def create_order(
     *,
     symbol: str,
@@ -146,7 +165,7 @@ def add_fill(
     price: Decimal,
     executed_at: datetime,
     exchange_trade_id: str | None = None,
-    commission: Decimal = Decimal("0"),
+    commission: Decimal = Decimal(0),
     commission_asset: str | None = None,
 ) -> int | None:
     if quantity <= 0 or price <= 0 or commission < 0:
@@ -236,8 +255,8 @@ def record_risk_snapshot(
     *,
     capital_eur: Decimal,
     risk_allowed: bool,
-    daily_pnl_eur: Decimal = Decimal("0"),
-    total_pnl_eur: Decimal = Decimal("0"),
+    daily_pnl_eur: Decimal = Decimal(0),
+    total_pnl_eur: Decimal = Decimal(0),
     open_positions: int = 0,
     reason: str | None = None,
     bot_run_id: int | None = None,

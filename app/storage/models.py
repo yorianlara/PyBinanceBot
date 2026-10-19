@@ -76,6 +76,9 @@ class TradeOrder(Base):
     order_type: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20), default="new")
     quantity: Mapped[Decimal] = mapped_column(Numeric(28, 10))
+    quote_order_qty: Mapped[Decimal | None] = mapped_column(
+        Numeric(28, 10)
+    )
     limit_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 10))
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

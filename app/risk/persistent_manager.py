@@ -1,6 +1,6 @@
 
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -35,7 +35,7 @@ class PersistentRiskManager:
 
     @staticmethod
     def _get_account(session) -> RiskAccount:
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
 
         session.execute(
             insert(RiskAccount)
@@ -51,7 +51,7 @@ class PersistentRiskManager:
 
         if account.pnl_day != today:
             account.pnl_day = today
-            account.daily_pnl_eur = Decimal("0")
+            account.daily_pnl_eur = Decimal(0)
 
         return account
 
@@ -109,7 +109,7 @@ class PersistentRiskManager:
 
         total_allocated = sum(
             (row.amount_eur for row in allocations),
-            Decimal("0"),
+            Decimal(0),
         )
 
         strategy_allocated = sum(
@@ -118,7 +118,7 @@ class PersistentRiskManager:
                 for row in allocations
                 if row.strategy_key == strategy_key
             ),
-            Decimal("0"),
+            Decimal(0),
         )
 
         if strategy_allocated + allocation_eur > max_strategy:
@@ -140,6 +140,7 @@ class PersistentRiskManager:
         order_type: str,
         quantity: Decimal,
         allocation_eur: Decimal,
+        quote_order_qty: Decimal | None = None,
         bot_run_id: int | None = None,
         client_order_id: str | None = None,
         limit_price: Decimal | None = None,
@@ -154,13 +155,6 @@ class PersistentRiskManager:
                 "La cantidad debe ser positiva y finita."
             )
 
-        if limit_price is not None and (
-            not limit_price.is_finite() or limit_price <= 0
-        ):
-            raise RiskRejected(
-                "El precio límite debe ser positivo y finito."
-            )
-
         if (
             not isinstance(symbol, str)
             or not symbol.strip()
@@ -169,6 +163,25 @@ class PersistentRiskManager:
         ):
             raise RiskRejected(
                 "El símbolo y el tipo de orden son obligatorios."
+            )
+
+        if quote_order_qty is not None and (
+            not quote_order_qty.is_finite() or quote_order_qty <= 0
+        ):
+            raise RiskRejected(
+                "El importe cotizado debe ser positivo y finito."
+            )
+
+        if quote_order_qty is not None and order_type.upper() != "MARKET":
+            raise RiskRejected(
+                "El importe cotizado solo se admite en órdenes MARKET."
+            )
+
+        if limit_price is not None and (
+            not limit_price.is_finite() or limit_price <= 0
+        ):
+            raise RiskRejected(
+                "El precio límite debe ser positivo y finito."
             )
 
         with SessionLocal.begin() as session:
@@ -200,6 +213,7 @@ class PersistentRiskManager:
                 order_type=order_type.upper(),
                 status="pending_submission",
                 quantity=quantity,
+                quote_order_qty=quote_order_qty,
                 limit_price=limit_price,
             )
 
@@ -256,12 +270,16 @@ class PersistentRiskManager:
         order_id: int,
         exchange_order: dict,
         exchange_trades: list[dict],
+        expected_side: str = "buy",
     ) -> None:
         """Registra las ejecuciones reales confirmadas por Binance."""
         status_map = {
             "NEW": "new",
             "PARTIALLY_FILLED": "partially_filled",
             "FILLED": "filled",
+            "CANCELED": "canceled",
+            "EXPIRED": "expired",
+            "REJECTED": "rejected",
         }
 
         exchange_status = exchange_order.get("status")
@@ -276,7 +294,7 @@ class PersistentRiskManager:
             )
             exchange_order_id = str(exchange_order["orderId"])
             exchange_symbol = exchange_order["symbol"].upper()
-        except (KeyError, TypeError, ValueError):
+        except (InvalidOperation, KeyError, TypeError, ValueError):
             raise RiskRejected(
                 "La respuesta de Binance no contiene datos válidos."
             ) from None
@@ -306,7 +324,7 @@ class PersistentRiskManager:
             if (
                 str(order.exchange_order_id) != exchange_order_id
                 or order.symbol != exchange_symbol
-                or order.side != "buy"
+                or order.side != expected_side
             ):
                 raise RiskRejected(
                     "La respuesta de Binance no corresponde a esta orden."
@@ -316,6 +334,9 @@ class PersistentRiskManager:
                 "new",
                 "partially_filled",
                 "filled",
+                "canceled",
+                "expired",
+                "rejected",
             }:
                 raise RiskRejected(
                     "La orden no está en un estado reconciliable."
@@ -331,10 +352,16 @@ class PersistentRiskManager:
                     commission = Decimal(str(trade["commission"]))
                     executed_at = datetime.fromtimestamp(
                         int(trade["time"]) / 1000,
-                        tz=timezone.utc,
+                        tz=UTC,
                     )
                     commission_asset = trade.get("commissionAsset")
-                except (KeyError, TypeError, ValueError, OverflowError):
+                except (
+                    InvalidOperation,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    OverflowError,
+                ):
                     raise RiskRejected(
                         "Binance devolvió una ejecución con datos inválidos."
                     ) from None
@@ -375,36 +402,358 @@ class PersistentRiskManager:
             )
             persisted_quantity = Decimal(str(persisted_quantity))
 
+            persisted_quote_quantity = session.scalar(
+                select(
+                    func.coalesce(
+                        func.sum(TradeFill.quantity * TradeFill.price),
+                        0,
+                    )
+                ).where(TradeFill.order_id == order.id)
+            )
+            persisted_quote_quantity = Decimal(
+                str(persisted_quote_quantity)
+            )
+
             if persisted_quantity != executed_quantity:
                 raise RiskRejected(
                     "Las ejecuciones registradas no coinciden con "
                     "la cantidad ejecutada informada por Binance."
                 )
 
-            if persisted_quantity > order.quantity:
+            if (
+                order.quote_order_qty is None
+                and persisted_quantity > order.quantity
+            ):
                 raise RiskRejected(
                     "La cantidad ejecutada supera la cantidad de la orden."
                 )
 
+            if (
+                expected_side == "buy"
+                and order.quote_order_qty is not None
+                and persisted_quote_quantity > order.quote_order_qty
+            ):
+                raise RiskRejected(
+                    "El importe ejecutado supera el importe cotizado "
+                    "de la orden."
+                )
+
             if exchange_status == "FILLED":
-                if persisted_quantity != order.quantity:
+                if (
+                    order.quote_order_qty is None
+                    and persisted_quantity != order.quantity
+                ):
                     raise RiskRejected(
                         "Binance marca la orden como ejecutada, pero "
                         "la cantidad no coincide con la orden."
                     )
+                if (
+                    expected_side == "buy"
+                    and order.quote_order_qty is not None
+                    and persisted_quantity <= 0
+                ):
+                    raise RiskRejected(
+                        "Binance marca la orden como ejecutada, pero "
+                        "no hay ejecuciones registradas."
+                    )
             elif exchange_status == "PARTIALLY_FILLED":
-                if not 0 < persisted_quantity < order.quantity:
+                if order.quote_order_qty is None and not (
+                    0 < persisted_quantity < order.quantity
+                ):
                     raise RiskRejected(
                         "La cantidad no corresponde a una ejecución parcial."
                     )
-            elif persisted_quantity != 0:
+                if (
+                    expected_side == "buy"
+                    and order.quote_order_qty is not None
+                    and persisted_quantity <= 0
+                ):
+                    raise RiskRejected(
+                        "La ejecución parcial no contiene fills registrados."
+                    )
+            elif exchange_status == "NEW" and persisted_quantity != 0:
                 raise RiskRejected(
                     "Binance marca la orden como nueva, pero existen "
                     "ejecuciones registradas."
                 )
 
+            if (
+                exchange_status in {"CANCELED", "EXPIRED", "REJECTED"}
+                and persisted_quantity == 0
+            ):
+                allocation = session.execute(
+                    select(RiskAllocation)
+                    .where(
+                        RiskAllocation.order_id == order_id,
+                        RiskAllocation.status == "active",
+                        RiskAllocation.allocation_type == "order",
+                    )
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if allocation is not None:
+                    allocation.status = "released"
+                    allocation.released_at = datetime.now(UTC)
+
             order.status = status_map[exchange_status]
-            order.updated_at = datetime.now(timezone.utc)
+            order.updated_at = datetime.now(UTC)
+
+    def reserve_exit_order(
+        self,
+        *,
+        position_id: int,
+        quantity: Decimal,
+        client_order_id: str,
+    ) -> int:
+        if not quantity.is_finite() or quantity <= 0:
+            raise RiskRejected("La cantidad de salida debe ser positiva y finita.")
+        if not client_order_id.strip():
+            raise RiskRejected("El identificador de salida es obligatorio.")
+
+        with SessionLocal.begin() as session:
+            self._lock(session)
+            position = session.get(
+                TradePosition,
+                position_id,
+                with_for_update=True,
+            )
+            if position is None or position.status != "open":
+                raise RiskRejected("No hay una posición abierta para cerrar.")
+
+            allocation = session.execute(
+                select(RiskAllocation)
+                .where(
+                    RiskAllocation.position_id == position_id,
+                    RiskAllocation.status == "active",
+                    RiskAllocation.allocation_type == "position",
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if allocation is None:
+                raise RiskRejected("La posición no tiene una reserva activa.")
+
+            existing_exit = session.scalar(
+                select(TradeOrder.id)
+                .where(
+                    TradeOrder.symbol == position.symbol,
+                    TradeOrder.side == "sell",
+                    TradeOrder.status.in_(
+                        {
+                            "pending_submission",
+                            "new",
+                            "partially_filled",
+                        }
+                    ),
+                )
+                .with_for_update()
+            )
+            if existing_exit is not None:
+                raise RiskRejected(
+                    "Ya existe una orden de salida pendiente para este símbolo."
+                )
+
+            order = TradeOrder(
+                bot_run_id=position.bot_run_id,
+                client_order_id=client_order_id,
+                symbol=position.symbol,
+                side="sell",
+                order_type="MARKET",
+                status="pending_submission",
+                quantity=quantity,
+            )
+            session.add(order)
+            session.flush()
+            return order.id
+
+    def finalize_exit_order(
+        self,
+        *,
+        position_id: int,
+        order_id: int,
+        eur_usdt_rate: Decimal,
+        base_asset: str,
+        quote_asset: str,
+    ) -> tuple[Decimal, Decimal, bool, list[str]]:
+        if not eur_usdt_rate.is_finite() or eur_usdt_rate <= 0:
+            raise ValueError("El tipo de cambio EURUSDT debe ser positivo y finito.")
+
+        base_asset = base_asset.upper()
+        quote_asset = quote_asset.upper()
+        with SessionLocal.begin() as session:
+            self._lock(session)
+            position = session.get(
+                TradePosition,
+                position_id,
+                with_for_update=True,
+            )
+            order = session.get(
+                TradeOrder,
+                order_id,
+                with_for_update=True,
+            )
+            if position is None or position.status != "open":
+                raise RiskRejected("La posición ya no está abierta.")
+            if (
+                order is None
+                or order.side != "sell"
+                or order.symbol != position.symbol
+                or order.status not in {
+                    "filled",
+                    "canceled",
+                    "expired",
+                    "rejected",
+                }
+            ):
+                raise RiskRejected(
+                    "La orden de salida no está conciliada o no corresponde "
+                    "a la posición."
+                )
+
+            position_allocation = session.execute(
+                select(RiskAllocation)
+                .where(
+                    RiskAllocation.position_id == position_id,
+                    RiskAllocation.status == "active",
+                    RiskAllocation.allocation_type == "position",
+                )
+                .with_for_update()
+            ).scalar_one_or_none()
+            if position_allocation is None or position_allocation.order_id is None:
+                raise RiskRejected("La posición no tiene una reserva activa.")
+
+            fills = session.scalars(
+                select(TradeFill).where(TradeFill.order_id == order_id)
+            ).all()
+            entry_fills = session.scalars(
+                select(TradeFill).where(
+                    TradeFill.order_id == position_allocation.order_id
+                )
+            ).all()
+            executed_quantity = sum(
+                (fill.quantity for fill in fills),
+                Decimal(0),
+            )
+            quote_value = sum(
+                (fill.quantity * fill.price for fill in fills),
+                Decimal(0),
+            )
+            base_commission = sum(
+                (
+                    fill.commission
+                    for fill in fills
+                    if fill.commission_asset
+                    and fill.commission_asset.upper() == base_asset
+                ),
+                Decimal(0),
+            )
+            quote_commission = sum(
+                (
+                    fill.commission
+                    for fill in fills
+                    if fill.commission_asset
+                    and fill.commission_asset.upper() == quote_asset
+                ),
+                Decimal(0),
+            )
+            external_commission_assets = sorted(
+                {
+                    fill.commission_asset.upper()
+                    for fill in [*entry_fills, *fills]
+                    if fill.commission_asset
+                    and fill.commission_asset.upper()
+                    not in {base_asset, quote_asset}
+                    and fill.commission > 0
+                }
+            )
+            if not executed_quantity.is_finite() or executed_quantity <= 0:
+                raise RiskRejected("La salida no tiene fills válidos.")
+            if executed_quantity > order.quantity:
+                raise RiskRejected(
+                    "La cantidad ejecutada supera la cantidad de salida."
+                )
+
+            position_quantity = Decimal(str(position.quantity))
+            inventory_reduction = executed_quantity + base_commission
+            if inventory_reduction > position_quantity:
+                raise RiskRejected(
+                    "La cantidad vendida y su comisión superan la posición."
+                )
+
+            average_exit = quote_value / executed_quantity
+            pnl_quote = (
+                quote_value
+                - quote_commission
+                - executed_quantity * position.entry_price
+                - base_commission * average_exit
+            )
+            pnl_eur = pnl_quote / eur_usdt_rate
+            remaining_quantity = position_quantity - inventory_reduction
+            now = datetime.now(UTC)
+
+            position.quantity = remaining_quantity
+            position.realized_pnl = (
+                Decimal(str(position.realized_pnl or 0)) + pnl_eur
+            )
+            position.exit_price = average_exit
+
+            fully_closed = remaining_quantity == 0
+            if fully_closed:
+                position.status = "closed"
+                position.closed_at = now
+                allocation = session.execute(
+                    select(RiskAllocation)
+                    .where(
+                        RiskAllocation.position_id == position_id,
+                        RiskAllocation.status == "active",
+                        RiskAllocation.allocation_type == "position",
+                    )
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if allocation is None:
+                    raise RiskRejected("La posición no tiene una reserva activa.")
+                allocation.status = "released"
+                allocation.released_at = now
+
+            account = self._get_account(session)
+            account.daily_pnl_eur += pnl_eur
+            account.total_pnl_eur += pnl_eur
+            order.status = "reconciled"
+            open_positions = session.scalar(
+                select(func.count())
+                .select_from(TradePosition)
+                .where(TradePosition.status == "open")
+            )
+            max_daily_loss = Decimal(str(self.config.max_daily_loss_eur))
+            max_total_loss = Decimal(str(self.config.max_total_loss_eur))
+            snapshot_reason = (
+                "Cierre parcial de posición"
+                if not fully_closed
+                else "Cierre de posición"
+            )
+            if external_commission_assets:
+                snapshot_reason += (
+                    "; PnL excluye conversión de comisiones en "
+                    f"{', '.join(external_commission_assets)}"
+                )
+            session.add(
+                RiskSnapshot(
+                    bot_run_id=position.bot_run_id,
+                    capital_eur=Decimal(str(self.config.max_capital_eur)),
+                    daily_pnl_eur=account.daily_pnl_eur,
+                    total_pnl_eur=account.total_pnl_eur,
+                    open_positions=open_positions,
+                    risk_allowed=(
+                        account.daily_pnl_eur > -max_daily_loss
+                        and account.total_pnl_eur > -max_total_loss
+                    ),
+                    reason=snapshot_reason,
+                )
+            )
+            return (
+                executed_quantity,
+                average_exit,
+                fully_closed,
+                external_commission_assets,
+            )
     
     def mark_filled(self, order_id: int) -> None:
         """Marca como ejecutada una orden confirmada por Binance."""
@@ -526,7 +875,7 @@ class PersistentRiskManager:
                 )
 
             allocation.status = "released"
-            allocation.released_at = datetime.now(timezone.utc)
+            allocation.released_at = datetime.now(UTC)
             order.status = status
 
     def convert_to_position(
@@ -535,6 +884,8 @@ class PersistentRiskManager:
         *,
         quantity: Decimal,
         entry_price: Decimal,
+        base_asset: str | None = None,
+        quote_asset: str | None = None,
     ) -> int:
         if (
             not quantity.is_finite()
@@ -565,24 +916,27 @@ class PersistentRiskManager:
                     "Solo se permiten entradas BUY en Binance Spot."
                 )
 
-            if order.status != "filled":
+            if order.status != "filled" and not (
+                order.status
+                in {"partially_filled", "canceled", "expired", "rejected"}
+                and order.quote_order_qty is not None
+            ):
                 raise RiskRejected(
-                    "La orden debe estar confirmada como ejecutada "
+                    "La orden debe tener ejecuciones confirmadas "
                     "antes de crear la posición."
                 )
             
-            fills = session.execute(
-                select(
-                    func.coalesce(func.sum(TradeFill.quantity), 0),
-                    func.coalesce(
-                        func.sum(TradeFill.quantity * TradeFill.price),
-                        0,
-                    ),
-                ).where(TradeFill.order_id == order_id)
-            ).one()
-
-            executed_quantity = Decimal(str(fills[0]))
-            executed_value = Decimal(str(fills[1]))
+            fills = session.scalars(
+                select(TradeFill).where(TradeFill.order_id == order_id)
+            ).all()
+            executed_quantity = sum(
+                (fill.quantity for fill in fills),
+                Decimal(0),
+            )
+            executed_value = sum(
+                (fill.quantity * fill.price for fill in fills),
+                Decimal(0),
+            )
 
             if (
                 not executed_quantity.is_finite()
@@ -594,13 +948,49 @@ class PersistentRiskManager:
                     "La orden no tiene ejecuciones válidas registradas."
                 )
 
-            if executed_quantity != order.quantity:
+            if (
+                order.quote_order_qty is None
+                and executed_quantity != order.quantity
+            ):
                 raise RiskRejected(
                     "La cantidad ejecutada no coincide con la orden."
                 )
 
-            quantity = executed_quantity
-            entry_price = executed_value / executed_quantity
+            if (
+                order.quote_order_qty is not None
+                and executed_value > order.quote_order_qty
+            ):
+                raise RiskRejected(
+                    "El importe ejecutado supera el importe cotizado "
+                    "de la orden."
+                )
+
+            base_commission = sum(
+                (
+                    fill.commission
+                    for fill in fills
+                    if base_asset
+                    and fill.commission_asset
+                    and fill.commission_asset.upper() == base_asset.upper()
+                ),
+                Decimal(0),
+            )
+            quote_commission = sum(
+                (
+                    fill.commission
+                    for fill in fills
+                    if quote_asset
+                    and fill.commission_asset
+                    and fill.commission_asset.upper() == quote_asset.upper()
+                ),
+                Decimal(0),
+            )
+            quantity = executed_quantity - base_commission
+            if quantity <= 0:
+                raise RiskRejected(
+                    "Las comisiones consumieron toda la cantidad comprada."
+                )
+            entry_price = (executed_value + quote_commission) / quantity
 
             allocation = session.execute(
                 select(RiskAllocation)
@@ -685,7 +1075,7 @@ class PersistentRiskManager:
                     "La posición no tiene una reserva activa."
                 )
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             pnl = realized_pnl_eur
 
             position.exit_price = exit_price
@@ -729,4 +1119,3 @@ class PersistentRiskManager:
                     reason="Cierre de posición",
                 )
             )
-
